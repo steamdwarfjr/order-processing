@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS orders (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    customer   VARCHAR(255)  NOT NULL,
+    item       VARCHAR(255)  NOT NULL,
+    amount     DECIMAL(10,2) NOT NULL,
+    status     VARCHAR(32)   NOT NULL DEFAULT 'NEW',
+    created_at TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+);
