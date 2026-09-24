@@ -1,0 +1,153 @@
+services:
+  mysql:
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: orders_db
+      MYSQL_USER: app
+      MYSQL_PASSWORD: apppass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [appnet]
+
+  kafka:
+    image: apache/kafka:3.7.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks: [appnet]
+
+  kafka-init: 
+    image: apache/kafka:3.7.0
+    container_name: init-topic
+    command:
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic order-events --partitions 3 --replication-factor 1
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [appnet]
+    
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [appnet]
+
+  rabbitmq:
+    image: rabbitmq:3.10.7-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks: [appnet]
+
+  app:
+    build: ./app
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_USER: app
+      MYSQL_PASSWORD: apppass
+      MYSQL_DATABASE: orders_db
+      KAFKA_BOOTSTRAP: kafka:9092
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: guest
+      RABBIT_PASS: guest
+    depends_on:
+      mysql:    {condition: service_healthy}
+      kafka:    {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  consumer-payment:
+    build: ./consumers
+    command: ["python", "payment_consumer.py"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      kafka: {condition: service_healthy}
+    networks: [appnet]
+
+  consumer-delivery:
+    build: ./consumers
+    command: ["python", "delivery_consumer.py"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      kafka: {condition: service_healthy}
+    networks: [appnet]
+
+  worker-notify:
+    build: ./worker
+    environment:
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: guest
+      RABBIT_PASS: guest
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    networks: [appnet]
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [appnet]
+
+volumes:
+  mysql-data:
+
+networks:
+  appnet:
+    driver: bridge
