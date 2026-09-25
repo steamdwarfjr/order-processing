@@ -8,6 +8,8 @@
     label { display: block; margin: 10px 0 4px; }
     input, button { width: 100%; padding: 8px; box-sizing: border-box; }
     #result { margin-top: 16px; white-space: pre-wrap; color: #036; }
+    #result.success { color: #070; font-weight: 600; }
+    #result.error   { color: #b00; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -30,6 +32,7 @@
         amount:   parseFloat(f.amount.value)
       };
       const out = document.getElementById('result');
+      out.className = '';
       out.textContent = 'Отправка...';
       try {
         const res = await fetch('/api/orders', {
@@ -38,9 +41,18 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        out.textContent = JSON.stringify(data, null, 2);
+        if (res.ok) {
+          out.className = 'success';
+          out.textContent = 'Заказ успешно зарегистрирован. Хотите сделать новый?';
+          f.reset();
+        } else {
+          out.className = 'error';
+          out.textContent = 'Ошибка: ' + (data.error || 'не удалось оформить заказ');
+        }
+        //out.textContent = JSON.stringify(data, null, 2); - вывод чистого JSON как ответ на записанный заказ
         if (res.ok) f.reset();
       } catch (err) {
+        out.className = 'error';
         out.textContent = 'Ошибка: ' + err;
       }
     });
